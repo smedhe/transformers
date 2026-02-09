@@ -902,7 +902,9 @@ class Cache:
         # forward through all the layers
         return len(self.layers)
 
-
+class HybridCache(Cache):
+    pass
+    
 class DynamicCache(Cache):
     """
     A cache that grows dynamically as more tokens are generated. This is the default for generative models.

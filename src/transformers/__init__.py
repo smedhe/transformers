@@ -361,6 +361,7 @@ else:
         "HQQQuantizedLayer",
         "Cache",
         "DynamicCache",
+        "HybridCache",
         "EncoderDecoderCache",
         "QuantizedCache",
         "StaticCache",
@@ -477,6 +478,7 @@ if TYPE_CHECKING:
     from .cache_utils import EncoderDecoderCache as EncoderDecoderCache
     from .cache_utils import HQQQuantizedLayer as HQQQuantizedLayer
     from .cache_utils import QuantizedCache as QuantizedCache
+    from .cache_utils import HybridCache as HybridCache
     from .cache_utils import QuantoQuantizedLayer as QuantoQuantizedLayer
     from .cache_utils import StaticCache as StaticCache
     from .cache_utils import StaticLayer as StaticLayer

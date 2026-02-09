@@ -3289,7 +3289,7 @@ class PreTrainedModel(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToH
             for ignore_key in self._keys_to_ignore_on_save:
                 if ignore_key in state_dict:
                     del state_dict[ignore_key]
-
+       
         # If model was sharded with TP, gather full tensors for saving
         if self._tp_size is not None:
             state_dict = gather_state_dict_for_save(state_dict, self._tp_plan, self._device_mesh, self._tp_size)

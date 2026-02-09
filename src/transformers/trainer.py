@@ -4048,7 +4048,7 @@ class Trainer:
                 remove_dummy_checkpoint(self.args.should_save, output_dir, [WEIGHTS_NAME, SAFE_WEIGHTS_NAME])
                 self.model_wrapped.save_checkpoint(output_dir)
 
-        elif self.args.should_save:
+        elif self.args.should_save or getattr(self, "is_tp_enabled", False):
             self._save(output_dir)
 
         # Push to the Hub when `save_model` is called by the user.
