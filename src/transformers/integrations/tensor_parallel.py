@@ -942,24 +942,45 @@ class GroupedGemmParallel(TensorParallelLayer):
     def shard_tensor(
         self, param: torch.Tensor, tensor_idx: int | None = None, device=None, dtype=None
     ) -> torch.Tensor:
+
         global_num_experts = self.empty_param.shape[0]
+        tp_size = self.device_mesh.size()
         if global_num_experts % self.device_mesh.size() != 0:
             raise ValueError(
                 f"Global number of experts must be divisible by number of devices: {global_num_experts} % {self.device_mesh.size()} != 0"
             )
         local_num_experts = global_num_experts // self.device_mesh.size()
         shard_size = local_num_experts
+        # if isinstance(device, torch.device):
+        #     device = device.index if device.index is not None else 0
+        
+        # start = device * shard_size
+        # end = (device + 1) * shard_size
+
+        # --- FIX START ---
+        # Normalize the device index to the Tensor Parallel Rank
+        # If device is global rank 2 and TP size is 2, tp_rank should be 0 (2 % 2 = 0)
         if isinstance(device, torch.device):
-            device = device.index if device.index is not None else 0
-        start = device * shard_size
-        end = (device + 1) * shard_size
+            device_idx = device.index if device.index is not None else 0
+        else:
+            # Assume device is already the integer rank
+            device_idx = int(device) if device is not None else 0
+            
+        tp_rank = device_idx % tp_size
+        # --- FIX END ---
+        
+        start = tp_rank * shard_size
+        end = (tp_rank + 1) * shard_size
         # special case we don't "shard" just send this entire tensor to the correct rank.
+        # dist.breakpoint(rank=0)
         shape = param.get_shape() if not isinstance(param, torch.Tensor) else param.shape
         if tensor_idx is not None and start <= tensor_idx < end:
             # this tensor does need to be materialized on this device:
             return param[:].to(device=device)
         elif tensor_idx is None:  # a bias or a weight, but already merged
+            # dist.breakpoint(rank=0)
             return param[start:end].to(device=device, dtype=dtype)
+        
         elif len(shape) >= 1 and tensor_idx is not None:
             return None
         else:  # bias case
@@ -1030,7 +1051,9 @@ class RouterParallel(TensorParallelLayer):
         num_local_experts = mod.num_experts // ep_size
         router_logits, router_scores, router_indices = outputs
         router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_scores)
+
         router_scores = router_scores[:, ep_rank * num_local_experts : (ep_rank + 1) * num_local_experts]
+        
         router_indices = router_indices.masked_fill((router_indices // num_local_experts) != ep_rank, -1)
         # As -1 % 1 is 0, we can only use mask fill when num_local_experts is 1
         if num_local_experts > 1:
@@ -1038,6 +1061,7 @@ class RouterParallel(TensorParallelLayer):
         else:
             router_indices = router_indices.masked_fill(router_indices > 0, 0).masked_fill(router_indices < 0, -1)
         router_indices = router_indices.masked_fill(router_indices == -1, num_local_experts)
+        # router_indices = router_indices.masked_fill(router_indices == -1, 0)
         return router_logits, router_scores, router_indices
 
     def shard_tensor(

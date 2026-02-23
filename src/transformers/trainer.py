@@ -4141,7 +4141,7 @@ class Trainer:
                     state_dict, os.path.join(output_dir, SAFE_WEIGHTS_NAME), metadata={"format": "pt"}
                 )
         else:
-            self.model.save_pretrained(output_dir, state_dict=state_dict)
+            self.model.save_pretrained(output_dir, state_dict=state_dict,save_original_format=False)
 
         if self.processing_class is not None:
             self.processing_class.save_pretrained(output_dir)

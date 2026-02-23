@@ -100,7 +100,9 @@ class GptOssExperts(nn.Module):
             # expert_idx only have 1 element, so we can use scale for fast indexing
             expert_idx = expert_idx[0]
             # skip masking index
-            if expert_idx == self.num_experts:
+            # if expert_idx == self.num_experts:
+            #     continue
+            if expert_idx >= self.gate_up_proj.shape[0]: 
                 continue
             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
             current_state = hidden_states[token_idx]
@@ -116,8 +118,8 @@ class GptOssExperts(nn.Module):
 class GptOssTopKRouter(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.top_k = config.num_experts_per_tok
-        self.num_experts = config.num_local_experts
+        self.top_k = config.num_experts_per_tok #4
+        self.num_experts = config.num_local_experts #32
         self.hidden_dim = config.hidden_size
         self.weight = nn.Parameter(torch.zeros(self.num_experts, self.hidden_dim))
         self.bias = nn.Parameter(torch.zeros(self.num_experts))

@@ -1095,12 +1095,26 @@ def convert_and_load_state_dict_in_model(
     converters = [entry for entry in weight_mapping if isinstance(entry, WeightConverter)]
     param_name_to_load: dict[str, WeightRenaming | WeightConverter] = {}
 
+        # # build '(?P<g0>.*.*\\.block_sparse_moe\\..*)' and group to source {'g0': '*.block_sparse_moe.'}
+    # # and target to source {'g0': '*.mlp.'}. This allows us to quickly find which pattern matched.
+    # if tp_plan != {}:
+    #     tp_plan_alt, tp_plan_by_group_name, _ = build_glob_alternation(list(tp_plan.keys()))
+    # if dtype_plan != {}:
+    #     dtype_policy_alt, dtype_policy_by_group_name, _ = build_glob_alternation(list(dtype_plan.keys()))
+
+
+    #################################################################################################################################
     # build '(?P<g0>.*.*\\.block_sparse_moe\\..*)' and group to source {'g0': '*.block_sparse_moe.'}
     # and target to source {'g0': '*.mlp.'}. This allows us to quickly find which pattern matched.
     if tp_plan != {}:
-        tp_plan_alt, tp_plan_by_group_name, _ = build_glob_alternation(list(tp_plan.keys()))
+        # Sort keys by length (descending) to ensure specific patterns match before general prefixes
+        sorted_tp_keys = sorted(tp_plan.keys(), key=len, reverse=True)
+        tp_plan_alt, tp_plan_by_group_name, _ = build_glob_alternation(sorted_tp_keys)
     if dtype_plan != {}:
-        dtype_policy_alt, dtype_policy_by_group_name, _ = build_glob_alternation(list(dtype_plan.keys()))
+        # It is good practice to apply the same fix for dtype_plan as well
+        sorted_dtype_keys = sorted(dtype_plan.keys(), key=len, reverse=True)
+        dtype_policy_alt, dtype_policy_by_group_name, _ = build_glob_alternation(sorted_dtype_keys)
+    #########################################################################################################################################
 
     pattern_to_converter = {k: converter for converter in converters for k in converter.source_patterns}
 
