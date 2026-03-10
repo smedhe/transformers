@@ -182,7 +182,6 @@ def _grouped_mm(
         
         return torch.nn.functional.grouped_mm(input.to(weight.dtype), weight, offs=offs)
     elif hasattr(torch, "_grouped_mm"):
-        # torch.distributed.breakpoint(rank=0)
         return torch._grouped_mm(input.to(weight.dtype), weight, offs=offs)
     else:
         raise ImportError(
@@ -235,6 +234,7 @@ def grouped_mm_experts_forward(
     top_k_weights: torch.Tensor,
 ) -> torch.Tensor:
 
+    # torch.distributed.breakpoint(rank=0)
     device = hidden_states.device
     num_top_k = top_k_index.size(-1)
     num_tokens = hidden_states.size(0)
@@ -246,9 +246,9 @@ def grouped_mm_experts_forward(
     # Reshape for easier indexing
     # S is the number of selected tokens-experts pairs (S = num_tokens * num_top_k)
     token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)  # (S,)
-    sample_weights = top_k_weights.reshape(-1)  # (S,)
+    # sample_weights = top_k_weights.reshape(-1)  # (S,)
     expert_ids = top_k_index.reshape(-1)  # (S,)
-
+    # torch.distributed.breakpoint(rank=0)
     # --- FIX 1: Filter out Expert Parallelism sentinels ---
     # In EP, tokens for other ranks have expert_id >= num_local_experts.
     valid_mask = expert_ids < num_local_experts
@@ -261,8 +261,17 @@ def grouped_mm_experts_forward(
     valid_indices = torch.nonzero(valid_mask).squeeze(-1)
     
     expert_ids_filtered = expert_ids[valid_indices]
-    sample_weights_filtered = sample_weights[valid_indices]
+    # sample_weights_filtered = sample_weights[valid_indices]
     token_idx_filtered = token_idx[valid_indices]
+    # Use Advanced Indexing to grab the specific weight for (Batch, Expert)
+    # top_k_weights is [128, 16].
+    # token_idx_filtered is the row (0..127).
+    # expert_ids_filtered is the column (0..15).
+    if top_k_weights.size(1) == num_local_experts:
+        sample_weights_filtered = top_k_weights[token_idx_filtered, expert_ids_filtered]
+    else:
+        sample_weights_filtered = top_k_weights.reshape(-1)  # (S,)
+
     
     # Get hidden states only for valid tokens
     selected_hidden_states = hidden_states[token_idx_filtered]
@@ -308,7 +317,7 @@ def grouped_mm_experts_forward(
     out_valid_restored = out_per_sample_g[inv_perm]
 
     # --- FIX 3: Scatter back to full size ---
-    # Create output tensor matching the original hidden_states dtype (e.g., FP32)
+    # Create output tensor matching the original hidden_states dtype 
     out_per_sample_full = torch.zeros(
         (token_idx.shape[0], hidden_dim), 
         dtype=hidden_states.dtype, 

@@ -942,15 +942,15 @@ class GroupedGemmParallel(TensorParallelLayer):
     def shard_tensor(
         self, param: torch.Tensor, tensor_idx: int | None = None, device=None, dtype=None
     ) -> torch.Tensor:
-
+        # torch.distributed.breakpoint(rank=0)
         global_num_experts = self.empty_param.shape[0]
-        tp_size = self.device_mesh.size()
+        # ep_size = self.device_mesh.size()
+        ep_rank, ep_size = self.device_mesh.get_local_rank(), self.device_mesh.size()
         if global_num_experts % self.device_mesh.size() != 0:
             raise ValueError(
                 f"Global number of experts must be divisible by number of devices: {global_num_experts} % {self.device_mesh.size()} != 0"
             )
         local_num_experts = global_num_experts // self.device_mesh.size()
-        shard_size = local_num_experts
         # if isinstance(device, torch.device):
         #     device = device.index if device.index is not None else 0
         
@@ -960,25 +960,23 @@ class GroupedGemmParallel(TensorParallelLayer):
         # --- FIX START ---
         # Normalize the device index to the Tensor Parallel Rank
         # If device is global rank 2 and TP size is 2, tp_rank should be 0 (2 % 2 = 0)
-        if isinstance(device, torch.device):
-            device_idx = device.index if device.index is not None else 0
-        else:
-            # Assume device is already the integer rank
-            device_idx = int(device) if device is not None else 0
+        # if isinstance(device, torch.device):
+        #     device_idx = device.index if device.index is not None else 0
+        # else:
+        #     # Assume device is already the integer rank
+        #     device_idx = int(device) if device is not None else 0
             
-        tp_rank = device_idx % tp_size
+        # ep_rank = device_idx % ep_size
         # --- FIX END ---
         
-        start = tp_rank * shard_size
-        end = (tp_rank + 1) * shard_size
+        start = ep_rank * local_num_experts
+        end = (ep_rank + 1) * local_num_experts
         # special case we don't "shard" just send this entire tensor to the correct rank.
-        # dist.breakpoint(rank=0)
         shape = param.get_shape() if not isinstance(param, torch.Tensor) else param.shape
         if tensor_idx is not None and start <= tensor_idx < end:
             # this tensor does need to be materialized on this device:
             return param[:].to(device=device)
         elif tensor_idx is None:  # a bias or a weight, but already merged
-            # dist.breakpoint(rank=0)
             return param[start:end].to(device=device, dtype=dtype)
         
         elif len(shape) >= 1 and tensor_idx is not None:
@@ -994,6 +992,47 @@ class GroupedGemmParallel(TensorParallelLayer):
         shape[0] = local_num_experts
         return tuple(shape)
 
+# class GroupedGemmParallel(TensorParallelLayer):
+#     """
+#     Applies Expert Parallelism to MoE experts by loading the correct experts on each device.
+#     """
+
+#     def __init__(self, **kwargs):
+#         super().__init__(**kwargs)
+
+#     def shard_tensor(
+#         self, param: torch.Tensor, tensor_idx: int | None = None, device=None, dtype=None
+#     ) -> torch.Tensor:
+#         global_num_experts = self.empty_param.shape[0]
+#         if global_num_experts % self.device_mesh.size() != 0:
+#             raise ValueError(
+#                 f"Global number of experts must be divisible by number of devices: {global_num_experts} % {self.device_mesh.size()} != 0"
+#             )
+#         local_num_experts = global_num_experts // self.device_mesh.size()
+#         shard_size = local_num_experts
+#         if isinstance(device, torch.device):
+#             device = device.index if device.index is not None else 0
+#         start = device * shard_size
+#         end = (device + 1) * shard_size
+#         # special case we don't "shard" just send this entire tensor to the correct rank.
+#         shape = param.get_shape() if not isinstance(param, torch.Tensor) else param.shape
+#         if tensor_idx is not None and start <= tensor_idx < end:
+#             # this tensor does need to be materialized on this device:
+#             return param[:].to(device=device)
+#         elif tensor_idx is None:  # a bias or a weight, but already merged
+#             return param[start:end].to(device=device, dtype=dtype)
+#         elif len(shape) >= 1 and tensor_idx is not None:
+#             return None
+#         else:  # bias case
+#             return param[:].to(device=device, dtype=dtype)
+
+#     def get_expected_sharded_shape(self, full_shape: tuple[int, ...] | torch.Size) -> tuple[int, ...]:
+#         # GroupedGemm shards on dim 0 (experts dimension)
+#         world_size = self.device_mesh.size()
+#         shape = list(full_shape)
+#         local_num_experts = shape[0] // world_size
+#         shape[0] = local_num_experts
+#         return tuple(shape)
 
 class RouterParallel(TensorParallelLayer):
     """
@@ -1051,7 +1090,7 @@ class RouterParallel(TensorParallelLayer):
         num_local_experts = mod.num_experts // ep_size
         router_logits, router_scores, router_indices = outputs
         router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_scores)
-
+        # torch.distributed.breakpoint(rank=0)
         router_scores = router_scores[:, ep_rank * num_local_experts : (ep_rank + 1) * num_local_experts]
         
         router_indices = router_indices.masked_fill((router_indices // num_local_experts) != ep_rank, -1)
@@ -1062,6 +1101,7 @@ class RouterParallel(TensorParallelLayer):
             router_indices = router_indices.masked_fill(router_indices > 0, 0).masked_fill(router_indices < 0, -1)
         router_indices = router_indices.masked_fill(router_indices == -1, num_local_experts)
         # router_indices = router_indices.masked_fill(router_indices == -1, 0)
+        # torch.distributed.breakpoint(rank=0)
         return router_logits, router_scores, router_indices
 
     def shard_tensor(
@@ -1180,15 +1220,17 @@ def gather_full_tensor(local_tensor: torch.Tensor, shard_dim: int, device_mesh) 
         The full reconstructed tensor (same on all ranks)
     """
 
-    pg = device_mesh.get_group("tp")
     world_size = device_mesh.size()
+
+    # In case of TP+DP configuration, the TP group should be used for gathering, not the full DP group
+    process_group = device_mesh.get_group("tp") if "tp" in (device_mesh.mesh_dim_names or {}) else None
     # Normalize negative dimension
     if shard_dim < 0:
         shard_dim = local_tensor.ndim + shard_dim
 
-    # Gather all shards
+    # Gather all shard
     gathered_tensors = [torch.empty_like(local_tensor) for _ in range(world_size)]
-    dist.all_gather(gathered_tensors, local_tensor.contiguous(), pg)
+    dist.all_gather(gathered_tensors, local_tensor.contiguous(), group=process_group)
 
     # Concatenate along the shard dimension
     return torch.cat(gathered_tensors, dim=shard_dim)
