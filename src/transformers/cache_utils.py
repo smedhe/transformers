@@ -1304,3 +1304,6 @@ class EncoderDecoderCache(Cache):
     @property
     def is_compileable(self) -> bool:
         return self.self_attention_cache.is_compileable
+
+class HybridChunkedCache:
+    pass

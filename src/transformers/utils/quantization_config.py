@@ -1902,3 +1902,9 @@ class Mxfp4Config(QuantizationConfigMixin):
             `dict[str, Any]`: Dictionary of all the attributes that make up this configuration instance.
         """
         return {"quant_method": self.quant_method, "modules_to_not_convert": self.modules_to_not_convert}
+
+class AwqBackendPackingMethod:
+    pass
+
+class AWQLinearVersion:
+    pass

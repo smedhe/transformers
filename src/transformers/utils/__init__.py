@@ -271,6 +271,8 @@ PROCESSOR_NAME = "processor_config.json"
 GENERATION_CONFIG_NAME = "generation_config.json"
 MODEL_CARD_NAME = "modelcard.json"
 
+#Adding this from 4.55.0 to make it work
+FLAX_WEIGHTS_NAME = "flax_model.msgpack"
 
 SENTENCEPIECE_UNDERLINE = "▁"
 SPIECE_UNDERLINE = SENTENCEPIECE_UNDERLINE  # Kept for backward compatibility

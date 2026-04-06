@@ -100,9 +100,7 @@ class GptOssExperts(nn.Module):
             # expert_idx only have 1 element, so we can use scale for fast indexing
             expert_idx = expert_idx[0]
             # skip masking index
-            # if expert_idx == self.num_experts:
-            #     continue
-            if expert_idx >= self.gate_up_proj.shape[0]: 
+            if expert_idx == self.num_experts:
                 continue
             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
             current_state = hidden_states[token_idx]
