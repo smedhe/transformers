@@ -1248,14 +1248,27 @@ def gather_state_dict_for_save(
     plan_to_weight_dim = ALL_PARALLEL_STYLES.plan_to_weight_dim
     plan_to_bias_dim = ALL_PARALLEL_STYLES.plan_to_bias_dim
 
-    result = {}
-    for key, tensor in state_dict.items():
-        # Find the matching TP plan for this parameter
-        param_name = key.rsplit(".", 1)[0] if "." in key else key
-        param_type = key.rsplit(".", 1)[1] if "." in key else None
-        generic_param_name = re.sub(r"\d+", "*", param_name)
-        # Also check the full key for nn.Parameter (e.g., MoE experts without .weight suffix)
-        generic_full_key = re.sub(r"\d+", "*", key)
+    # result = {}
+    # for key, tensor in state_dict.items():
+    #     # Find the matching TP plan for this parameter
+    #     param_name = key.rsplit(".", 1)[0] if "." in key else key
+    #     param_type = key.rsplit(".", 1)[1] if "." in key else None
+    #     generic_param_name = re.sub(r"\d+", "*", param_name)
+    #     # Also check the full key for nn.Parameter (e.g., MoE experts without .weight suffix)
+    #     generic_full_key = re.sub(r"\d+", "*", key)
+
+
+    _PEFT_PREFIX = "base_model.model."  
+  
+    result = {}  
+    for key, tensor in state_dict.items():  
+        # Strip PEFT prefix for tp_plan lookup; keep original key in result  
+        lookup_key = key[len(_PEFT_PREFIX):] if key.startswith(_PEFT_PREFIX) else key  
+    
+        param_name = lookup_key.rsplit(".", 1)[0] if "." in lookup_key else lookup_key  
+        param_type = lookup_key.rsplit(".", 1)[1] if "." in lookup_key else None  
+        generic_param_name = re.sub(r"\d+", "*", param_name)  
+        generic_full_key = re.sub(r"\d+", "*", lookup_key)  
 
         # Check if this parameter has a TP plan
         current_plan = None
