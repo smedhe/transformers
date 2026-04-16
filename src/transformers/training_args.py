@@ -44,6 +44,7 @@ from .utils import (
     is_torch_mlu_available,
     is_torch_mps_available,
     is_torch_musa_available,
+    is_torch_qaic_available,
     is_torch_neuroncore_available,
     is_torch_npu_available,
     is_torch_tf32_available,
@@ -1351,8 +1352,8 @@ class TrainingArguments:
     ddp_backend: str | None = field(
         default=None,
         metadata={
-            "help": "The backend to use for distributed training. Must be one of 'nccl', 'mpi', 'xccl', 'gloo', 'hccl'.",
-            "choices": ["nccl", "gloo", "mpi", "xccl", "hccl", "cncl", "mccl"],
+            "help": "The backend to use for distributed training. Must be one of 'nccl', 'mpi', 'xccl', 'gloo', 'hccl', 'qccl'.",
+            "choices": ["nccl", "gloo", "mpi", "xccl", "hccl", "cncl", "mccl", "qccl"],
         },
     )
     ddp_timeout: int = field(
@@ -1837,6 +1838,10 @@ class TrainingArguments:
             elif is_torch_hpu_available():
                 device = torch.device("hpu:0")
                 torch.hpu.set_device(device)
+            elif is_torch_qaic_available():
+                device = torch.device("qaic:0")
+                torch.qaic.set_device(device)
+                self._n_gpu = torch.qaic.device_count()
             else:
                 # Default to cuda:0 (respects CUDA_VISIBLE_DEVICES); nn.DataParallel handles n_gpu > 1
                 device = torch.device(
