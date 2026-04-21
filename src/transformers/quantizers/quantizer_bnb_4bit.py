@@ -29,6 +29,7 @@ from ..utils import (
     is_torch_available,
     is_torch_hpu_available,
     is_torch_npu_available,
+    is_torch_qaic_available,
     is_torch_xpu_available,
     logging,
 )
@@ -107,6 +108,8 @@ class Bnb4BitHfQuantizer(HfQuantizer):
                 device_map = {"": f"npu:{torch.npu.current_device()}"}
             elif is_torch_hpu_available() and hasattr(torch, "hpu"):
                 device_map = {"": f"hpu:{torch.hpu.current_device()}"}
+            elif is_torch_qaic_available():
+                device_map = {"": f"qaic:{torch.qaic.current_device()}"}
             elif is_torch_xpu_available():
                 device_map = {"": torch.xpu.current_device()}
             else:

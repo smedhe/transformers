@@ -169,6 +169,7 @@ from .utils import (
     is_sagemaker_mp_enabled,
     is_torch_hpu_available,
     is_torch_mlu_available,
+    is_torch_qaic_available,
     is_torch_musa_available,
     is_torch_npu_available,
     is_torch_xla_available,
@@ -3179,6 +3180,12 @@ class Trainer:
             else:
                 rng_states["musa"] = torch.musa.get_rng_state()
 
+        if is_torch_qaic_available():
+            if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
+                rng_states["qaic"] = torch.qaic.get_rng_state_all()
+            else:
+                rng_states["qaic"] = torch.qaic.get_rng_state()
+
         # A process can arrive here before the process 0 has a chance to save the model, in which case output_dir may
         # not yet exist.
         os.makedirs(output_dir, exist_ok=True)
@@ -3556,6 +3563,8 @@ class Trainer:
             set_rng_state_for_device("MLU", torch.mlu, checkpoint_rng_state, is_distributed)
         if is_torch_musa_available():
             set_rng_state_for_device("MUSA", torch.musa, checkpoint_rng_state, is_distributed)
+        if is_torch_qaic_available():
+            set_rng_state_for_device("QAIC", torch.qaic, checkpoint_rng_state, is_distributed)
 
     def _load_optimizer_and_scheduler(self, checkpoint: str | None) -> None:
         """If optimizer and scheduler states exist, load them."""

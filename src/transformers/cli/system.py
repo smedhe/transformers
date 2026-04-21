@@ -34,6 +34,7 @@ from ..utils import (
     is_torch_available,
     is_torch_hpu_available,
     is_torch_npu_available,
+    is_torch_qaic_available,
     is_torch_xpu_available,
 )
 
@@ -77,6 +78,7 @@ def env(
         pt_cuda_available = torch.cuda.is_available()
         pt_xpu_available = is_torch_xpu_available()
         pt_npu_available = is_torch_npu_available()
+        pt_qaic_available = is_torch_qaic_available()
         pt_hpu_available = is_torch_hpu_available()
 
         if pt_cuda_available:
@@ -87,6 +89,8 @@ def env(
             pt_accelerator = "NPU"
         elif pt_hpu_available:
             pt_accelerator = "HPU"
+        elif pt_qaic_available:
+            pt_accelerator = "QAIC"
 
     deepspeed_version = "not installed"
     if is_deepspeed_available():
