@@ -3803,7 +3803,15 @@ class Trainer:
                 remove_dummy_checkpoint(self.args.should_save, output_dir, [WEIGHTS_NAME, SAFE_WEIGHTS_NAME])
                 self.model_wrapped.save_checkpoint(output_dir)
 
-        elif self.args.should_save:
+        elif self._is_tp_peft_model():
+            
+            # TP-sharded PEFT models: save_pretrained internally runs an
+            # all_gather across the TP group to reconstruct unsharded LoRA
+            # factors. That collective requires every TP rank to participate,
+            # so we cannot gate this on rank 0 alone.
+            self._save_tp_peft(output_dir)
+
+        elif self.args.should_save or getattr(self.model, "_tp_size", None) is not None:
             self._save(output_dir)
 
         # Push to the Hub when `save_model` is called by the user.
@@ -3848,6 +3856,115 @@ class Trainer:
 
         # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+
+    def _is_tp_peft_model(self) -> bool:
+        """True iff TP sharding is active and a PEFT adapter is installed.
+
+        Detects PEFT either as the PeftModel wrapper (preferred) OR as the
+        inner base model with `peft_config` set (when something stripped the
+        wrapper, or when `add_adapter` was used instead of `get_peft_model`).
+        """
+        if self.get_tp_size() <= 1:
+            return False
+        if not is_peft_available():
+            return False
+
+        from peft import PeftModel
+
+        model = self.model
+        if hasattr(self, "accelerator"):
+            model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
+        if isinstance(model, PeftModel):
+            return True
+        # Wrapper-stripped or add_adapter path — peft_config is set on the base.
+        return bool(getattr(model, "peft_config", None))
+
+    def _save_tp_peft(self, output_dir: str | None = None) -> None:
+        """Collective TP-aware save for LoRA adapters.
+
+        Runs the LoRA filter + TP all_gather on every rank (collective), but
+        only rank 0 writes files. Works whether `self.model` is a PeftModel
+        or the inner PreTrainedModel with `peft_config` attached.
+        """
+        import torch
+        import torch.distributed as dist
+
+        from peft import PeftModel
+        from peft.utils.save_and_load import get_peft_model_state_dict
+
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        is_main = bool(self.args.should_save)
+
+        model = self.model
+        if hasattr(self, "accelerator"):
+            model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
+
+        peft_configs = getattr(model, "peft_config", None)
+        if not peft_configs:
+            raise RuntimeError(
+                f"_save_tp_peft expected a model with peft_config attached, "
+                f"got {type(model).__name__} without one."
+            )
+
+        if is_main:
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Saving TP+PEFT checkpoint to {output_dir}")
+
+        if isinstance(model, PeftModel):
+            # Wrapped path — let PEFT do everything correctly.
+            # save_pretrained internally runs get_peft_model_state_dict
+            # (which is collective via _get_tp_info), and gates disk writes
+            # on is_main_process.
+            model.save_pretrained(
+                output_dir,
+                is_main_process=is_main,
+                safe_serialization=getattr(self.args, "save_safetensors", True),
+            )
+        else:
+            # Unwrapped path — replicate PeftModel.save_pretrained's behavior.
+            from peft.utils.constants import SAFETENSORS_WEIGHTS_NAME
+            from safetensors.torch import save_file as safe_save_file
+
+            for adapter_name, peft_config in peft_configs.items():
+                # COLLECTIVE: every rank must enter so the all_gather inside
+                # gather_state_dict_for_save completes.
+                output_state_dict = get_peft_model_state_dict(
+                    model, adapter_name=adapter_name, save_embedding_layers="auto"
+                )
+                adapter_dir = (
+                    os.path.join(output_dir, adapter_name)
+                    if adapter_name != "default"
+                    else output_dir
+                )
+                if is_main:
+                    os.makedirs(adapter_dir, exist_ok=True)
+                    if peft_config.base_model_name_or_path is None:
+                        peft_config.base_model_name_or_path = getattr(model, "name_or_path", None)
+                    peft_config.save_pretrained(adapter_dir)
+
+                    # safetensors requires contiguous tensors and no aliases.
+                    for k, v in list(output_state_dict.items()):
+                        if not v.is_contiguous():
+                            output_state_dict[k] = v.contiguous()
+                    safe_save_file(
+                        output_state_dict,
+                        os.path.join(adapter_dir, SAFETENSORS_WEIGHTS_NAME),
+                        metadata={"format": "pt"},
+                    )
+
+        if is_main:
+            if self.processing_class is not None:
+                self.processing_class.save_pretrained(output_dir)
+            elif (
+                self.data_collator is not None
+                and hasattr(self.data_collator, "tokenizer")
+                and self.data_collator.tokenizer is not None
+            ):
+                self.data_collator.tokenizer.save_pretrained(output_dir)
+            torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+
+        if dist.is_initialized():
+            dist.barrier()
 
     # ---- Logging & Metrics ----
 

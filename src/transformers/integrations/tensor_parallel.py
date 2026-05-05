@@ -729,11 +729,20 @@ class ColwiseParallel(TensorParallelLayer):
         shape[dim] = end - start
         return tuple(shape)
 
+    # def update_module_attributes(self, module: nn.Module):
+    #     # If we gather the output, the output dimension of the module is not sharded, so no need to update out_features.
+    #     # Otherwise, we need to update out_features to reflect the sharded dimension.
+    #     if not self.gather_output and hasattr(module, "out_features"):
+    #         module.out_features = self.get_expected_sharded_shape((module.out_features,))[0]
+
     def update_module_attributes(self, module: nn.Module):
-        # If we gather the output, the output dimension of the module is not sharded, so no need to update out_features.
-        # Otherwise, we need to update out_features to reflect the sharded dimension.
         if not self.gather_output and hasattr(module, "out_features"):
-            module.out_features = self.get_expected_sharded_shape((module.out_features,))[0]
+            # Use the sharded weight shape as the source of truth so this update
+            # is idempotent across multiple parameters (weight + bias, etc.).
+            if hasattr(module, "weight") and getattr(module.weight, "ndim", 0) >= 2:
+                module.out_features = int(module.weight.shape[0])
+            else:
+                module.out_features = self.get_expected_sharded_shape((module.out_features,))[0]
 
 
 class ReplicatedWithGradAllReduce(TensorParallelLayer):
@@ -872,12 +881,20 @@ class RowwiseParallel(TensorParallelLayer):
         shape[dim] = end - start
         return tuple(shape)
 
+    # def update_module_attributes(self, module: nn.Module):
+    #     if hasattr(module, "in_features"):
+    #         # To fall in the 2D case in get_expected_sharded_shape,
+    #         # otherwise it will be treated as 1D and not sharded
+    #         shape = (1, module.in_features)
+    #         module.in_features = self.get_expected_sharded_shape(shape)[1]
+
     def update_module_attributes(self, module: nn.Module):
         if hasattr(module, "in_features"):
-            # To fall in the 2D case in get_expected_sharded_shape,
-            # otherwise it will be treated as 1D and not sharded
-            shape = (1, module.in_features)
-            module.in_features = self.get_expected_sharded_shape(shape)[1]
+            if hasattr(module, "weight") and getattr(module.weight, "ndim", 0) >= 2:
+                module.in_features = int(module.weight.shape[1])
+            else:
+                shape = (1, module.in_features)
+                module.in_features = self.get_expected_sharded_shape(shape)[1]
 
 
 class PackedColwiseParallel(ColwiseParallel):
@@ -1410,6 +1427,7 @@ def add_tensor_parallel_hooks_to_module(
         module._hf_tp_plan = current_module_plan
         module._hf_device_mesh = device_mesh
         module.__repr__ = lambda: f"{module.__repr__()}\nTP Plan: {current_module_plan}"
+
 
 
 def shard_and_distribute_module(
