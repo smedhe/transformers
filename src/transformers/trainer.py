@@ -2012,12 +2012,25 @@ class Trainer:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
+        # if (
+        #     self.args.average_tokens_across_devices
+        #     and (self.model_accepts_loss_kwargs or self.compute_loss_func)
+        #     and num_items_in_batch is not None
+        # ):
+        #     loss *= self.accelerator.num_processes if self.args.n_gpu <= 1 else self.args.n_gpu
+
         if (
             self.args.average_tokens_across_devices
             and (self.model_accepts_loss_kwargs or self.compute_loss_func)
             and num_items_in_batch is not None
         ):
-            loss *= self.accelerator.num_processes if self.args.n_gpu <= 1 else self.args.n_gpu
+            # When parallelism_config is used (TP/CP/etc.), num_items_in_batch was
+            # gathered over world and then divided by non_data_parallel_size, so the
+            # effective scale factor is data_parallel_size, not num_processes.
+            scale = self.accelerator.num_processes if self.args.n_gpu <= 1 else self.args.n_gpu
+            if pc := getattr(self.accelerator, "parallelism_config", None):
+                scale = scale // pc.non_data_parallel_size
+            loss *= scale
 
         return (loss, outputs) if return_outputs else loss
 
